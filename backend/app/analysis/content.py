@@ -38,11 +38,33 @@ async def analyze_email_content(email_text: str, headers: Optional[Dict[str, Any
     try:
         async with httpx.AsyncClient(base_url="https://openrouter.ai/api/v1/") as client:
             response = await client.post("chat/completions", json=payload, headers=headers_, timeout=30)
+            
+            # Spezielle Behandlung für verschiedene HTTP-Status-Codes
+            if response.status_code == 401:
+                logger.error("OpenRouter API-Key ist ungültig oder fehlt. Bitte überprüfen Sie die Konfiguration.")
+                return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse nicht verfügbar: API-Key ungültig"]}'
+            elif response.status_code == 403:
+                logger.error("OpenRouter API-Zugriff verweigert. Möglicherweise fehlende Berechtigungen oder ungültiger API-Key.")
+                return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse nicht verfügbar: Zugriff verweigert"]}'
+            elif response.status_code == 429:
+                logger.error("OpenRouter API Rate Limit erreicht. Zu viele Anfragen.")
+                return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse nicht verfügbar: Rate Limit erreicht"]}'
+            elif response.status_code >= 500:
+                logger.error("OpenRouter API Server-Fehler: %s", response.status_code)
+                return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse nicht verfügbar: Server-Fehler"]}'
+            
             response.raise_for_status()
             result = response.json()
             content = result["choices"][0]["message"]["content"]
             logger.info("KI-Analyse erfolgreich durchgeführt.")
             return content
+            
+    except httpx.TimeoutException:
+        logger.error("OpenRouter API Timeout - Anfrage dauerte zu lange.")
+        return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse nicht verfügbar: Timeout"]}'
+    except httpx.ConnectError:
+        logger.error("OpenRouter API Verbindungsfehler - Netzwerk nicht erreichbar.")
+        return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse nicht verfügbar: Netzwerk-Fehler"]}'
     except Exception as e:
-        logger.error("Fehler bei der KI-Analyse: %s", e)
-        return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse fehlgeschlagen"]}' 
+        logger.error("Unerwarteter Fehler bei der KI-Analyse: %s", e)
+        return '{"bewertung": "unbekannt", "risikostufe": "mittel", "score": 50, "gruende": ["KI-Analyse fehlgeschlagen: Unerwarteter Fehler"]}' 

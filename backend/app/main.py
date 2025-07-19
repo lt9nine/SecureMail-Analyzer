@@ -9,11 +9,11 @@ from app.analysis.result import parse_analysis_result, combine_results
 from app.analysis.headers import analyze_headers
 from app.analysis.links import extract_links, analyze_links
 from app.imap.modifier import change_subject
-from app.core.config import logger, IMAP_HOST, IMAP_USER, IMAP_PASSWORD
+from app.core.config import logger, IMAP_HOST, IMAP_USER, IMAP_PASSWORD, OPENROUTER_API_KEY
 from app.models import (
     AnalysisResponse, ModifySubjectResponse, HealthResponse, 
     ErrorResponse, EmailAnalysis, HeaderAnalysis, LinkAnalysis, 
-    AIAnalysis, FinalScore
+    AIAnalysis, FinalScore, StatsResponse
 )
 from app.audit import log_analysis, log_subject_modification, log_api_access
 from app.rate_limiter import rate_limiter, get_client_id
@@ -99,6 +99,9 @@ async def get_cached_analysis(uid: str, msg) -> Dict[str, Any]:
         "from_addr": from_addr,
         "score": combined["score"],
         "risk_level": combined["risikostufe"],
+        "header_score": combined.get("header_score", 0),
+        "link_score": combined.get("link_score", 0),
+        "ai_score": combined.get("ai_score", 0),
         "headers": header_result,
         "links": link_result,
         "analysis": result
@@ -191,11 +194,26 @@ async def health_check():
     # Prüfe OpenRouter-Verbindung
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("https://openrouter.ai/api/v1/models", timeout=5)
+            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"} if OPENROUTER_API_KEY else {}
+            response = await client.get("https://openrouter.ai/api/v1/models", headers=headers, timeout=5)
+            
             if response.status_code == 200:
                 services["openrouter"] = "ok"
+            elif response.status_code == 401:
+                logger.error("OpenRouter API-Key ist ungültig oder fehlt")
+                services["openrouter"] = "auth_error"
+            elif response.status_code == 403:
+                logger.error("OpenRouter API-Zugriff verweigert")
+                services["openrouter"] = "forbidden"
             else:
+                logger.error("OpenRouter health check failed with status: %s", response.status_code)
                 services["openrouter"] = "error"
+    except httpx.TimeoutException:
+        logger.error("OpenRouter health check timeout")
+        services["openrouter"] = "timeout"
+    except httpx.ConnectError:
+        logger.error("OpenRouter health check connection error")
+        services["openrouter"] = "connection_error"
     except Exception as e:
         logger.error("OpenRouter health check failed: %s", e)
         services["openrouter"] = "error"
@@ -233,7 +251,13 @@ async def analyze_emails(limit: int = 3):
                 headers=HeaderAnalysis(**analysis_data["headers"]),
                 links=[LinkAnalysis(**link) for link in analysis_data["links"]],
                 analysis=AIAnalysis(**analysis_data["analysis"]),
-                final=FinalScore(score=analysis_data["score"], risikostufe=analysis_data["risk_level"])
+                final=FinalScore(
+                    score=analysis_data["score"], 
+                    risikostufe=analysis_data["risk_level"],
+                    header_score=analysis_data.get("header_score", 0),
+                    link_score=analysis_data.get("link_score", 0),
+                    ai_score=analysis_data.get("ai_score", 0)
+                )
             )
             results.append(email_analysis)
         
@@ -337,6 +361,69 @@ async def email_events():
             "Access-Control-Allow-Headers": "Cache-Control"
         }
     )
+
+@app.get("/stats", response_model=StatsResponse)
+async def get_email_stats():
+    """Gibt Statistiken über alle analysierten E-Mails zurück."""
+    try:
+        # Hole alle E-Mails aus dem Cache
+        if not email_cache:
+            return StatsResponse(
+                total=0,
+                high_risk=0,
+                medium_risk=0,
+                low_risk=0,
+                average_score=0,
+                top_threats=[],
+                risk_trend=[]
+            )
+        
+        # Berechne Statistiken
+        total = len(email_cache)
+        high_risk = sum(1 for data in email_cache.values() 
+                       if data["data"]["risk_level"] == "hoch")
+        medium_risk = sum(1 for data in email_cache.values() 
+                         if data["data"]["risk_level"] == "mittel")
+        low_risk = sum(1 for data in email_cache.values() 
+                      if data["data"]["risk_level"] == "niedrig")
+        
+        # Durchschnittlicher Score
+        total_score = sum(data["data"]["score"] for data in email_cache.values())
+        average_score = total_score / total if total > 0 else 0
+        
+        # Top Bedrohungen (Mock-Daten für jetzt)
+        top_threats = [
+            {"threat": "Phishing", "count": 12},
+            {"threat": "Lookalike Domain", "count": 8},
+            {"threat": "SPF Fehler", "count": 6},
+            {"threat": "Gefährlicher Link", "count": 5},
+            {"threat": "Social Engineering", "count": 4}
+        ]
+        
+        # Risk Trend (Mock-Daten für jetzt)
+        risk_trend = [
+            {"date": "01.12", "score": 45},
+            {"date": "02.12", "score": 52},
+            {"date": "03.12", "score": 38},
+            {"date": "04.12", "score": 67},
+            {"date": "05.12", "score": 41},
+            {"date": "06.12", "score": 58},
+            {"date": "07.12", "score": 62}
+        ]
+        
+        return StatsResponse(
+            total=total,
+            high_risk=high_risk,
+            medium_risk=medium_risk,
+            low_risk=low_risk,
+            average_score=average_score,
+            top_threats=top_threats,
+            risk_trend=risk_trend
+        )
+        
+    except Exception as e:
+        logger.error("Error generating stats: %s", e)
+        raise HTTPException(status_code=500, detail="Error generating statistics")
 
 @app.post("/modify-subject", response_model=ModifySubjectResponse)
 async def modify_subject(

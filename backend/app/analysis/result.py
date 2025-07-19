@@ -30,10 +30,14 @@ def combine_results(header_result, link_result, ai_result):
         header_score += 5
     # Links: Punycode oder viele Links = Risiko
     link_score = 0
-    if any(l.get("punycode") for l in link_result):
+    if any(l.get("is_punycode") for l in link_result):
         link_score -= 10
     if len(link_result) > 3:
         link_score -= 5
+    # Zusätzliche Link-Risiken
+    for link in link_result:
+        if link.get("risk_score", 0) > 50:
+            link_score -= 15
     # Zusätzliche Checks
     penalty = 0
     # Gefährliche Anhänge
@@ -62,4 +66,11 @@ def combine_results(header_result, link_result, ai_result):
         risk = "mittel"
     else:
         risk = "niedrig"
-    return {"score": final_score, "risikostufe": risk} 
+    
+    return {
+        "score": final_score, 
+        "risikostufe": risk,
+        "header_score": header_score,
+        "link_score": link_score,
+        "ai_score": ai_score
+    } 

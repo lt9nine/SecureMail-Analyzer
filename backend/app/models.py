@@ -23,7 +23,9 @@ class HeaderAnalysis(BaseModel):
 
 class LinkAnalysis(BaseModel):
     url: str
-    punycode: bool
+    domain: str
+    is_punycode: bool
+    risk_score: int
 
 class AIAnalysis(BaseModel):
     bewertung: str
@@ -34,6 +36,9 @@ class AIAnalysis(BaseModel):
 class FinalScore(BaseModel):
     score: int
     risikostufe: str
+    header_score: int
+    link_score: int
+    ai_score: int
 
 class EmailAnalysis(BaseModel):
     uid: str
@@ -63,4 +68,21 @@ class HealthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
-    error_code: Optional[str] = None 
+    error_code: Optional[str] = None
+
+class ThreatCount(BaseModel):
+    threat: str
+    count: int
+
+class RiskTrendPoint(BaseModel):
+    date: str
+    score: int
+
+class StatsResponse(BaseModel):
+    total: int
+    high_risk: int
+    medium_risk: int
+    low_risk: int
+    average_score: float
+    top_threats: List[ThreatCount]
+    risk_trend: List[RiskTrendPoint] 

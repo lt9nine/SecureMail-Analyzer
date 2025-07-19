@@ -23,10 +23,25 @@ def analyze_links(links: List[str]) -> List[Dict[str, object]]:
     for link in links:
         try:
             parsed = urlparse(link)
-            is_punycode = parsed.hostname and parsed.hostname.startswith('xn--')
+            domain = parsed.hostname or ""
+            is_punycode = domain.startswith('xn--')
+            
+            # Berechne Risk Score basierend auf verschiedenen Faktoren
+            risk_score = 0
+            if is_punycode:
+                risk_score += 50
+            if not domain:
+                risk_score += 30
+            if len(domain) > 50:  # Sehr lange Domains sind verdächtig
+                risk_score += 20
+            if domain.count('.') > 3:  # Viele Subdomains
+                risk_score += 15
+                
             results.append({
                 "url": link,
-                "punycode": is_punycode
+                "domain": domain,
+                "is_punycode": is_punycode,
+                "risk_score": min(100, risk_score)
             })
         except Exception as e:
             logger.warning("Fehler bei der Link-Analyse für %s: %s", link, e)
