@@ -1,0 +1,86 @@
+.App {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f8fafc;
+}
+
+.App-header {
+  background-color: white;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 20px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.App-header h1 {
+  color: #1e293b;
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+  text-align: center;
+}
+
+main {
+  flex: 1;
+  padding: 20px 0;
+  background-color: #f8fafc;
+}
+
+.health-status {
+  font-size: 0.875rem;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin: 12px auto 0;
+  text-align: center;
+  max-width: 600px;
+  font-weight: 500;
+}
+
+.health-status.loading {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.health-status.ok {
+  background-color: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.health-status.warning {
+  background-color: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fed7aa;
+}
+
+.health-status.error {
+  background-color: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.health-status .services {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.health-status .service {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.health-status .service.ok {
+  background-color: #16a34a;
+  color: white;
+}
+
+.health-status .service.error {
+  background-color: #dc2626;
+  color: white;
+} 

@@ -21,6 +21,8 @@ import imaplib, email
 from email.header import decode_header
 from typing import Dict, Any
 import httpx
+import html
+import re
 
 app = FastAPI(
     title="SecureMail Analyzer API",
@@ -61,6 +63,36 @@ def decode_mime_header(header_value: str) -> str:
     except Exception as e:
         logger.warning("Fehler beim Dekodieren des Headers '%s': %s", header_value, e)
         return header_value
+
+def clean_email_address(email_addr: str) -> str:
+    """Bereinigt E-Mail-Adressen von HTML-Entities und Unicode-Escape-Sequenzen."""
+    if not email_addr:
+        return ""
+    try:
+        # Dekodiere HTML-Entities
+        cleaned = html.unescape(email_addr)
+        # Dekodiere Unicode-Escape-Sequenzen
+        cleaned = cleaned.encode().decode('unicode_escape')
+        
+        # Extrahiere E-Mail aus "Name <email@domain.com>" Format
+        email_match = re.search(r'<([^>]+)>', cleaned)
+        if email_match:
+            return email_match.group(1).strip()
+        
+        # Fallback: Entferne überflüssige Anführungszeichen und Klammern
+        cleaned = re.sub(r'^["\']+|["\']+$', '', cleaned)  # Anführungszeichen am Anfang/Ende
+        cleaned = re.sub(r'^<+|>+$', '', cleaned)  # Spitze Klammern am Anfang/Ende
+        
+        # Suche nach E-Mail-Pattern
+        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        match = re.search(email_pattern, cleaned)
+        if match:
+            return match.group(0)
+        
+        return cleaned.strip()
+    except Exception as e:
+        logger.warning("Fehler beim Bereinigen der E-Mail-Adresse '%s': %s", email_addr, e)
+        return email_addr
 
 async def check_rate_limit(request: Request):
     """Dependency für Rate-Limiting."""
@@ -115,6 +147,11 @@ async def analyze_emails(limit: int = 3):
             # Dekodiere MIME-kodierte Betreffzeile
             raw_subject = msg["subject"] or ""
             subject = decode_mime_header(raw_subject)
+            
+            # Bereinige E-Mail-Adresse
+            raw_from = msg["from"] or ""
+            from_addr = clean_email_address(raw_from)
+            
             header_result = analyze_headers(msg)
             
             text = ""
@@ -133,13 +170,13 @@ async def analyze_emails(limit: int = 3):
             
             # Audit-Log
             uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-            log_analysis(uid_str, subject, msg["from"], combined["score"], combined["risikostufe"])
+            log_analysis(uid_str, subject, from_addr, combined["score"], combined["risikostufe"])
             
             # Erstelle Pydantic-Modelle
             email_analysis = EmailAnalysis(
                 uid=uid_str,
                 subject=subject,
-                from_addr=msg["from"],  # Das wird automatisch zu 'from' gemappt
+                from_addr=from_addr,  # Das wird automatisch zu 'from' gemappt
                 headers=HeaderAnalysis(**header_result),
                 links=[LinkAnalysis(**link) for link in link_result],
                 analysis=AIAnalysis(**result),
