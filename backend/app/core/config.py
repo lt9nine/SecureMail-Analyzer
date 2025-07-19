@@ -8,7 +8,11 @@ load_dotenv()
 # Logging-Konfiguration
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s'
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('securemail.log', encoding='utf-8')
+    ]
 )
 logger = logging.getLogger("securemail-analyzer")
 
