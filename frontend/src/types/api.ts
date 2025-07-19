@@ -1,17 +1,24 @@
 // API Response Types matching our backend models
 
 export interface HeaderAnalysis {
-  spf_pass: boolean
-  dkim_pass: boolean
-  dmarc_pass: boolean
-  sender_lookalike: boolean
-  reply_to_consistent: boolean
-  dangerous_attachments: boolean
-  header_anomalies: number
-  recipient_count: number
-  external_images: number
-  tracking_pixels: number
-  score: number
+  spf: string
+  dkim: string
+  dmarc: string
+  from_domain: string
+  from_lookalike: string
+  reply_to: string
+  return_path: string
+  reply_path_warning: string
+  attachments: any[]
+  dangerous_attachments: any[]
+  encrypted_attachments: any[]
+  to_count: number
+  cc_count: number
+  bcc_count: number
+  recipient_warning: string
+  header_anomalies: any[]
+  external_images: any[]
+  tracking_pixels: any[]
 }
 
 export interface LinkAnalysis {
@@ -22,10 +29,10 @@ export interface LinkAnalysis {
 }
 
 export interface AIAnalysis {
-  score: number
+  bewertung: string
   risikostufe: string
-  begründung: string
-  empfehlung: string
+  score: number
+  gruende: string[]
 }
 
 export interface FinalScore {

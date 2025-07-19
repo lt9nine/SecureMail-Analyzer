@@ -2,28 +2,36 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background-color: #f8fafc;
+  background-color: var(--bg-secondary);
 }
 
 .App-header {
-  background-color: white;
-  border-bottom: 1px solid #e2e8f0;
+  background-color: var(--card-bg);
+  border-bottom: 1px solid var(--border-color);
   padding: 20px 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .App-header h1 {
-  color: #1e293b;
+  color: var(--text-primary);
   font-size: 2rem;
   font-weight: 700;
   margin: 0;
   text-align: center;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
 main {
   flex: 1;
   padding: 20px 0;
-  background-color: #f8fafc;
+  background-color: var(--bg-secondary);
 }
 
 .health-status {
@@ -37,9 +45,9 @@ main {
 }
 
 .health-status.loading {
-  background-color: #f1f5f9;
-  color: #64748b;
-  border: 1px solid #e2e8f0;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
 }
 
 .health-status.ok {
@@ -48,16 +56,34 @@ main {
   border: 1px solid #bbf7d0;
 }
 
+.dark .health-status.ok {
+  background-color: #064e3b;
+  color: #34d399;
+  border: 1px solid #065f46;
+}
+
 .health-status.warning {
   background-color: #fffbeb;
   color: #92400e;
   border: 1px solid #fed7aa;
 }
 
+.dark .health-status.warning {
+  background-color: #451a03;
+  color: #fbbf24;
+  border: 1px solid #92400e;
+}
+
 .health-status.error {
   background-color: #fef2f2;
   color: #991b1b;
   border: 1px solid #fecaca;
+}
+
+.dark .health-status.error {
+  background-color: #450a0a;
+  color: #f87171;
+  border: 1px solid #991b1b;
 }
 
 .health-status .services {

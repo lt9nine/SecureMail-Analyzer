@@ -52,6 +52,11 @@ class ApiService {
     const timestamp = new Date().getTime()
     return this.request<HealthResponse>(`/health?t=${timestamp}`)
   }
+
+  // Server-Sent Events für Echtzeit-Updates
+  createEventSource(): EventSource {
+    return new EventSource(`${API_BASE}/events`)
+  }
 }
 
 // Export singleton instance

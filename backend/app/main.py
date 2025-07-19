@@ -2,6 +2,7 @@
 # Haupt-Loop + API-Starter 
 from fastapi import FastAPI, Query, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from app.imap.fetcher import fetch_latest_emails
 from app.analysis.content import analyze_email_content
 from app.analysis.result import parse_analysis_result, combine_results
@@ -23,6 +24,9 @@ from typing import Dict, Any
 import httpx
 import html
 import re
+import json
+import time
+from datetime import datetime, timedelta
 
 app = FastAPI(
     title="SecureMail Analyzer API",
@@ -39,10 +43,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Cache für E-Mail-Analysen (UID -> {data, timestamp})
+email_cache: Dict[str, Dict] = {}
+CACHE_DURATION = 300  # 5 Minuten Cache
+
 RISK_PREFIXES = ["[⚠️ Hochrisiko]", "[Warnung]", "[Info]"]
 
 def has_risk_prefix(subject: str) -> bool:
     return any((subject or "").startswith(prefix) for prefix in RISK_PREFIXES)
+
+async def get_cached_analysis(uid: str, msg) -> Dict[str, Any]:
+    """
+    Holt gecachte Analyse oder führt neue durch.
+    """
+    current_time = time.time()
+    
+    # Prüfe Cache
+    if uid in email_cache:
+        cache_entry = email_cache[uid]
+        if current_time - cache_entry["timestamp"] < CACHE_DURATION:
+            logger.info("Cache-Hit für UID %s", uid)
+            return cache_entry["data"]
+    
+    # Führe neue Analyse durch
+    logger.info("Neue Analyse für UID %s", uid)
+    
+    # Dekodiere MIME-kodierte Betreffzeile
+    raw_subject = msg["subject"] or ""
+    subject = decode_mime_header(raw_subject)
+    
+    # Bereinige E-Mail-Adresse
+    raw_from = msg["from"] or ""
+    from_addr = clean_email_address(raw_from)
+    
+    header_result = analyze_headers(msg)
+    
+    text = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                text += part.get_payload(decode=True).decode(errors="ignore")
+    else:
+        text = msg.get_payload(decode=True).decode(errors="ignore")
+    
+    links = extract_links(text)
+    link_result = analyze_links(links)
+    gpt_response = await analyze_email_content(text, headers=header_result, links=link_result)
+    result = parse_analysis_result(gpt_response)
+    combined = combine_results(header_result, link_result, result)
+    
+    # Cache das Ergebnis
+    analysis_data = {
+        "uid": uid,
+        "subject": subject,
+        "from_addr": from_addr,
+        "score": combined["score"],
+        "risk_level": combined["risikostufe"],
+        "headers": header_result,
+        "links": link_result,
+        "analysis": result
+    }
+    
+    email_cache[uid] = {
+        "data": analysis_data,
+        "timestamp": current_time
+    }
+    
+    # Cache-Größe begrenzen (max 100 Einträge)
+    if len(email_cache) > 100:
+        oldest_uid = min(email_cache.keys(), key=lambda k: email_cache[k]["timestamp"])
+        del email_cache[oldest_uid]
+    
+    return analysis_data
 
 def decode_mime_header(header_value: str) -> str:
     """Dekodiert MIME-kodierte Header-Werte (z.B. Betreffzeilen)."""
@@ -144,43 +216,24 @@ async def analyze_emails(limit: int = 3):
         results = []
         
         for uid, msg in emails:
-            # Dekodiere MIME-kodierte Betreffzeile
-            raw_subject = msg["subject"] or ""
-            subject = decode_mime_header(raw_subject)
+            uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
             
-            # Bereinige E-Mail-Adresse
-            raw_from = msg["from"] or ""
-            from_addr = clean_email_address(raw_from)
-            
-            header_result = analyze_headers(msg)
-            
-            text = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        text += part.get_payload(decode=True).decode(errors="ignore")
-            else:
-                text = msg.get_payload(decode=True).decode(errors="ignore")
-            
-            links = extract_links(text)
-            link_result = analyze_links(links)
-            gpt_response = await analyze_email_content(text, headers=header_result, links=link_result)
-            result = parse_analysis_result(gpt_response)
-            combined = combine_results(header_result, link_result, result)
+            # Verwende gecachte Analyse
+            analysis_data = await get_cached_analysis(uid_str, msg)
             
             # Audit-Log
-            uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-            log_analysis(uid_str, subject, from_addr, combined["score"], combined["risikostufe"])
+            log_analysis(uid_str, analysis_data["subject"], analysis_data["from_addr"], 
+                        analysis_data["score"], analysis_data["risk_level"])
             
             # Erstelle Pydantic-Modelle
             email_analysis = EmailAnalysis(
                 uid=uid_str,
-                subject=subject,
-                from_addr=from_addr,  # Das wird automatisch zu 'from' gemappt
-                headers=HeaderAnalysis(**header_result),
-                links=[LinkAnalysis(**link) for link in link_result],
-                analysis=AIAnalysis(**result),
-                final=FinalScore(**combined)
+                subject=analysis_data["subject"],
+                from_addr=analysis_data["from_addr"],
+                headers=HeaderAnalysis(**analysis_data["headers"]),
+                links=[LinkAnalysis(**link) for link in analysis_data["links"]],
+                analysis=AIAnalysis(**analysis_data["analysis"]),
+                final=FinalScore(score=analysis_data["score"], risikostufe=analysis_data["risk_level"])
             )
             results.append(email_analysis)
         
@@ -191,6 +244,99 @@ async def analyze_emails(limit: int = 3):
     except Exception as e:
         logger.error("Fehler im Analyse-Endpoint: %s", e)
         raise HTTPException(status_code=500, detail="Analyse fehlgeschlagen")
+
+@app.get("/events")
+async def email_events():
+    """
+    Server-Sent Events Endpoint für Echtzeit-Updates.
+    Sendet Updates wenn neue E-Mails analysiert werden.
+    """
+    async def event_generator():
+        last_check = time.time()
+        last_email_count = 0
+        
+        while True:
+            try:
+                # Prüfe auf neue E-Mails alle 30 Sekunden
+                current_time = time.time()
+                if current_time - last_check >= 30:
+                    emails = fetch_latest_emails(limit=10)
+                    current_email_count = len(emails)
+                    
+                    # Sende Update nur wenn sich die Anzahl geändert hat
+                    if current_email_count != last_email_count:
+                        # Verwende gecachte Analyse für die neueste E-Mail
+                        if emails:
+                            uid, msg = emails[0]  # Neueste E-Mail
+                            uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                            
+                            # Verwende gecachte Analyse
+                            analysis_data = await get_cached_analysis(uid_str, msg)
+                            
+                            # Erstelle Update-Event
+                            update_data = {
+                                "type": "new_email",
+                                "timestamp": current_time,
+                                "email_count": current_email_count,
+                                "latest_email": {
+                                    "uid": uid_str,
+                                    "subject": analysis_data["subject"],
+                                    "from_addr": analysis_data["from_addr"],
+                                    "score": analysis_data["score"],
+                                    "risk_level": analysis_data["risk_level"]
+                                }
+                            }
+                            
+                            yield {
+                                "event": "email_update",
+                                "data": json.dumps(update_data)
+                            }
+                        
+                        last_email_count = current_email_count
+                    
+                    last_check = current_time
+                
+                # Sende Heartbeat alle 10 Sekunden
+                yield {
+                    "event": "heartbeat",
+                    "data": json.dumps({
+                        "timestamp": current_time,
+                        "status": "connected"
+                    })
+                }
+                
+                await asyncio.sleep(10)  # 10 Sekunden Pause zwischen Checks
+                
+            except Exception as e:
+                logger.error("Fehler im SSE-Event-Generator: %s", e)
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "error": str(e),
+                        "timestamp": time.time()
+                    })
+                }
+                await asyncio.sleep(30)  # Längere Pause bei Fehlern
+
+    async def sse_generator():
+        async for event in event_generator():
+            if event["event"] == "email_update":
+                yield f"event: {event['event']}\ndata: {event['data']}\n\n"
+            elif event["event"] == "heartbeat":
+                yield f"event: {event['event']}\ndata: {event['data']}\n\n"
+            elif event["event"] == "error":
+                yield f"event: {event['event']}\ndata: {event['data']}\n\n"
+    
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
 
 @app.post("/modify-subject", response_model=ModifySubjectResponse)
 async def modify_subject(
